@@ -1,4 +1,4 @@
-# FBref 2026 World Cup Stats Dashboard
+# FIFA 2026 World Cup Stats Dashboard
 
 ## Overview
 An interactive analytics hub built to track elite international performers, compare top nations, and explore premium football data visualizations from the 2026 World Cup. The application provides a seamless, responsive dark-mode UI with "glass-card" styling for an optimal viewing experience.
