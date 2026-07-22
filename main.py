@@ -1,10 +1,11 @@
+import csv
 import streamlit as st
 import pandas as pd
 import numpy as np
-import soccerdata as sd
 import plotly.express as px
-st.title('FBref 2026 World Cup Stats')
-st.write('Interactive dashboard with premium World Cup analytics and beautifully styled visuals.')
+
+st.title('FIFA 2026 World Cup Stats')
+st.write('Interactive dashboard with World Cup analytics and beautifully styled visuals.')
 
 st.markdown(
     '''
@@ -64,19 +65,51 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
- 
 
-@st.cache_data(show_spinner=False, ttl=86400)
-def load_fbref_data():
-    fb = sd.FBref(leagues='INT-World Cup', seasons=2026)
-    return {
-        'player_standard': fb.read_player_season_stats(stat_type='standard'),
-        'player_misc': fb.read_player_season_stats(stat_type='misc'),
-        'player_keeper': fb.read_player_season_stats(stat_type='keeper'),
-        'team_standard': fb.read_team_season_stats(stat_type='standard'),
-        'team_misc': fb.read_team_season_stats(stat_type='misc'),
-        'team_keeper': fb.read_team_season_stats(stat_type='keeper'),
-    }
+def build_headers(header_rows: list[list[str]]) -> list[str]:
+    headers: list[str] = []
+    max_len = max(len(row) for row in header_rows)
+    for i in range(max_len):
+        parts = [row[i].strip() if i < len(row) else '' for row in header_rows]
+        primary = parts[0]
+        secondary = parts[1]
+        tertiary = parts[2] if len(parts) > 2 else ''
+        if primary and secondary:
+            headers.append(f'{primary}_{secondary}')
+        elif primary:
+            headers.append(primary)
+        elif secondary:
+            headers.append(secondary)
+        else:
+            headers.append(tertiary)
+    return [header.strip('_') for header in headers]
+
+
+def read_fbref_csv(path: str) -> pd.DataFrame:
+    with open(path, encoding='utf-8-sig', newline='') as handle:
+        reader = csv.reader(handle)
+        header_rows = [next(reader) for _ in range(3)]
+        headers = build_headers(header_rows)
+        rows = list(reader)
+
+    # FBref CSVs often include a fourth row of repeated column labels after the header rows.
+    if rows and len(rows[0]) >= 4:
+        first_row_lower = [cell.strip().lower() for cell in rows[0][:4]]
+        if first_row_lower == ['league', 'season', 'team', 'player']:
+            rows = rows[1:]
+
+    df = pd.DataFrame(rows, columns=headers)
+
+    def convert_if_numeric(series: pd.Series) -> pd.Series:
+        values = series.astype(str).str.strip()
+        nonempty = values[values != '']
+        if nonempty.empty:
+            return series
+        if nonempty.str.match(r'^[+-]?(\d+)(\.\d+)?$').all():
+            return pd.to_numeric(values, errors='coerce')
+        return series
+
+    return df.apply(convert_if_numeric)
 
 
 def flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -100,6 +133,8 @@ def find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
             if candidate_low in col_low:
                 return col
     return None
+
+
 def get_flag_url(nation: str) -> str | None:
     if not nation or not isinstance(nation, str):
         return None
@@ -153,6 +188,7 @@ def safe_top(df: pd.DataFrame, column: str | None, n: int = 5, extra_cols: list[
     result = df.sort_values(column, ascending=False).head(n)[cols].reset_index(drop=True)
     return result.loc[:, ~result.columns.duplicated()]
 
+
 def safe_bottom(df: pd.DataFrame, column: str | None, n: int = 5, extra_cols: list[str] | None = None) -> pd.DataFrame:
     if column is None or column not in df.columns:
         return pd.DataFrame(
@@ -163,36 +199,18 @@ def safe_bottom(df: pd.DataFrame, column: str | None, n: int = 5, extra_cols: li
     result = df.sort_values(column, ascending=True).head(n)[cols].reset_index(drop=True)
     return result.loc[:, ~result.columns.duplicated()]
 
-if 'fbref_data' not in st.session_state:
-    st.session_state['fbref_data'] = None
-
 # Sidebar controls
 st.sidebar.title('🏆 World Cup 2026 Analysis')
 st.sidebar.header('Player analysis')
-st.sidebar.write('FBref data is not loaded yet.')
-load_button = st.sidebar.button('Load FBref data')
 
-if load_button or st.session_state['fbref_data'] is None:
-    with st.spinner('Loading FBref data... This may take 1-2 minutes. Please wait...'):
-        try:
-            st.session_state['fbref_data'] = load_fbref_data()
-        except Exception as exc:
-            st.error('Error loading FBref data:')
-            st.exception(exc)
+player_standard = read_fbref_csv('player_standard.csv')
+player_misc = read_fbref_csv('player_misc.csv')
+player_keeper = read_fbref_csv('player_keeper.csv')
+team_standard = read_fbref_csv('team_standard.csv')
+team_misc = read_fbref_csv('team_misc.csv')
+team_keeper = read_fbref_csv('team_keeper.csv')
 
-if st.session_state['fbref_data'] is None:
-    st.sidebar.warning('Press the button in the sidebar to start loading FBref data.')
-    st.stop()
 
-data = st.session_state['fbref_data']
-player_standard = flatten_columns(data['player_standard']).reset_index()
-player_misc = flatten_columns(data['player_misc']).reset_index()
-player_keeper = flatten_columns(data['player_keeper']).reset_index()
-team_standard = flatten_columns(data['team_standard']).reset_index()
-team_misc = flatten_columns(data['team_misc']).reset_index()
-team_keeper = flatten_columns(data['team_keeper']).reset_index()
-
- 
 goal_col = find_column(player_standard, ['Performance_Gls', 'Performance_Goals', 'Gls', 'Goals'])
 assist_col = find_column(player_standard, ['Performance_Ast', 'Assists', 'Ast'])
 tackle_col = find_column(player_misc, ['Performance_TklW', 'TklW', 'Tackles'])
@@ -396,8 +414,7 @@ if not player_analysis.empty:
             st.plotly_chart(fig_assist_pie, use_container_width=True)
 
         col11, col12 = st.columns(2)
-        
-        # Standardized layout settings for both charts
+
         shared_domain = dict(x=[0.05, 0.75])
         shared_legend = dict(orientation='v', x=0.85, xanchor='left', y=0.5, font=dict(color='#f5f1da'))
         shared_margin = dict(l=8, r=8, t=40, b=8)
@@ -411,16 +428,12 @@ if not player_analysis.empty:
                 title=f'Tackle share among top {len(top_tackle_pie)} of {selected_nation}',
                 color_discrete_sequence=px.colors.sequential.Agsunset,
             )
-            
-            # Apply standardized domain
             fig_tackle_pie.update_traces(
-                textposition='inside', 
-                textinfo='percent+label', 
-                rotation=90, 
+                textposition='inside',
+                textinfo='percent+label',
+                rotation=90,
                 domain=shared_domain
             )
-            
-            # Apply standardized legend and margins
             fig_tackle_pie.update_layout(
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
@@ -434,10 +447,9 @@ if not player_analysis.empty:
             st.plotly_chart(fig_tackle_pie, use_container_width=True)
 
         with col12:
-            # Team runs/goals pie chart (prefer run metric, fall back to goals)
             run_candidates = ['Performance_Runs', 'Runs', 'Carries', 'Carry', 'Progressive Carries', 'Dribbles', 'Dribble']
             run_col = find_column(player_misc, run_candidates) or find_column(player_standard, run_candidates)
-            
+
             if run_col is not None:
                 run_by_team = player_misc.groupby('team', as_index=False)[run_col].sum().sort_values(run_col, ascending=False).head(8)
                 chart_label = 'Runs'
@@ -458,15 +470,11 @@ if not player_analysis.empty:
                     title=chart_title,
                     color_discrete_sequence=px.colors.sequential.Agsunset,
                 )
-                
-                # Apply standardized domain
                 fig_run_team.update_traces(
-                    textposition='inside', 
-                    textinfo='percent+label', 
+                    textposition='inside',
+                    textinfo='percent+label',
                     domain=shared_domain
                 )
-                
-                # Apply standardized legend and margins
                 fig_run_team.update_layout(
                     paper_bgcolor='rgba(0,0,0,0)',
                     plot_bgcolor='rgba(0,0,0,0)',
@@ -477,8 +485,6 @@ if not player_analysis.empty:
                     margin=shared_margin,
                     legend=shared_legend,
                 )
-                
-                # Ensure use_container_width is passed here as well
                 st.plotly_chart(fig_run_team, use_container_width=True)
 
         heatmap_cols = [goal_col, assist_col]
@@ -507,7 +513,6 @@ if not player_analysis.empty:
                 title_font_color='#d4af37',
             )
             fig_heat.update_traces(colorbar=dict(tickfont_color='#f5f1da'))
-            # Show team pie above the heatmap and rotate it upside-down
             if fig_run_team is not None:
                 try:
                     fig_run_team.update_traces(rotation=180)
@@ -516,7 +521,6 @@ if not player_analysis.empty:
                 st.plotly_chart(fig_run_team, use_container_width=True)
             else:
                 st.markdown("<p style='color:#d7c88e;'>No team run/goal data available.</p>", unsafe_allow_html=True)
-            # Heatmap full width below pie
             st.plotly_chart(fig_heat, use_container_width=True)
 
         fig3d = px.scatter_3d(
