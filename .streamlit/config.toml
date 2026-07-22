@@ -1,5 +1,2 @@
 [server]
-port = 8502
-
-# Optional: prevent browser auto-open when running locally
 headless = true
